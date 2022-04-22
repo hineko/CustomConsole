@@ -111,7 +111,7 @@ namespace CustomConsole.Editor
 		/// <returns></returns>
 		public static int GetEntryCount(int row)
 		{
-			return (int)(LogEntriesType.GetMethod("GetEntryCount", sFlags)?.Invoke(null, new object[] {row}) ?? 0);
+			return (int)(LogEntriesType.GetMethod("GetEntryCount", sFlags)?.Invoke(null, new object[] { row }) ?? 0);
 		}
 
 		/// <summary>
@@ -158,7 +158,7 @@ namespace CustomConsole.Editor
 		{
 			ConstructorInfo ctor = LogEntry.GetOriginalType.GetConstructor(Type.EmptyTypes);
 			object logEntryObject = ctor?.Invoke(null);
-			bool result = (bool) (LogEntriesType.GetMethod("GetEntryInternal", sFlags)?.Invoke(null, new [] {row, logEntryObject}) ?? false);
+			bool result = (bool)(LogEntriesType.GetMethod("GetEntryInternal", sFlags)?.Invoke(null, new[] { row, logEntryObject }) ?? false);
 
 			// オリジナルログの中身を取り出し利用できるように割り当てる
 			logEntry.SetValueFromOriginalObject(logEntryObject);
@@ -203,6 +203,11 @@ namespace CustomConsole.Editor
 		public static void EndGettingEntries()
 		{
 			LogEntriesType.GetMethod("EndGettingEntries", sFlags)?.Invoke(null, new object[0]);
+		}
+
+		public static void ClickStatusBar(int count)
+		{
+			LogEntriesType.GetMethod("ClickStatusBar", sFlags)?.Invoke(null, new object[] { count });
 		}
 	}
 }

@@ -6,6 +6,7 @@ namespace CustomConsole.Editor
 {
 	public enum ListViewOptions
 	{
+        None = 0,
 		WantsReordering = 1,
 		WantsExternalFiles,
 		WantsToStartCustomDrag = 4,

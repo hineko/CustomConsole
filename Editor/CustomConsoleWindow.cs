@@ -8,11 +8,12 @@ using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEditorInternal;
 using UnityEngine;
-using UnityEngine.Experimental.Networking.PlayerConnection;
+
 using Assembly = System.Reflection.Assembly;
 
 namespace CustomConsole.Editor
 {
+	// IHasCustomMenuはウィンドウ右上にメニューを追加する
 	public class CustomConsoleWindow : EditorWindow, IHasCustomMenu
 	{
 		#region Class
@@ -20,8 +21,17 @@ namespace CustomConsole.Editor
 		private class StackTraceData
 		{
 			public int LineNumber;
+			public int ColumnNumber;
 			public string MethodName;
 			public string DataPath;
+
+			public StackTraceData(int line, string method, string path, int column = -1)
+			{
+				LineNumber = line;
+				MethodName = method;
+				DataPath = path;
+				ColumnNumber = column;
+			}
 		}
 
 		#endregion
@@ -81,14 +91,14 @@ namespace CustomConsole.Editor
 		private const string WINDOW_SPLIT_TYPE_KEY = "CustomConsoleWindowSplitType";
 		private const string CLEAR_ON_COMPILATION_KEY = "CustomConsole_ClearOnCompilation";
 
-		private static readonly Type ListViewGUIType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.ListViewGUI");
-
 		private static readonly Type SplitterStateType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.SplitterState");
 		private static readonly Type EditorGUIType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.EditorGUI");
+		private static readonly Type EditorGUILayoutType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.EditorGUILayout");
 
+		private static readonly Type ListViewGUIType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.ListViewGUI");
 		private static readonly Type ListViewStateType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.ListViewState");
 
-#if UNITY_2017
+#if !UNITY_2019_1_OR_NEWER
 		private static readonly Type ConsoleAttachProfilerUIType = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.ConsoleWindow").GetNestedType("ConsoleAttachProfilerUI", BindingFlags.NonPublic);
 #endif
 		//private static readonly Type GUIStyleType = Assembly.Load("UnityEngine.dll").GetType("UnityEngine.GUIStyle");
@@ -126,6 +136,9 @@ namespace CustomConsole.Editor
 		private string activeText = "";
 		private string searchText;
 
+		private GUIContent clearContent;
+		private GUIContent clearOnPlayContent;
+		private GUIContent clearOnBuildContent;
 		private GUIContent clearOnCompilationContent;
 
 		private GenericMenu.MenuFunction openPlayerLogFunction;
@@ -140,32 +153,35 @@ namespace CustomConsole.Editor
 
 		private GUIStyle toolbar;
 		private GUIStyle toolbarButton;
+		private GUIStyle toolbarButtonRight;
 		private GUIStyle box;
+
+		private GUIStyle toolbarDropDownToggle;
 
 		private GUIStyle evenBackground;
 		private GUIStyle oddBackground;
 
-		private GUIStyle CountBadge;
+		private GUIStyle countBadge;
 
-		private GUIStyle LogStyle;
-		private GUIStyle WarningStyle;
-		private GUIStyle ErrorStyle;
+		private GUIStyle logStyle;
+		private GUIStyle warningStyle;
+		private GUIStyle errorStyle;
 
 		private GUIStyle watchStyle;
 
-		private GUIStyle IconErrorStyle;
-		private GUIStyle IconWarningStyle;
-		private GUIStyle IconLogStyle;
+		private GUIStyle iconErrorStyle;
+		private GUIStyle iconWarningStyle;
+		private GUIStyle iconLogStyle;
 
-		private GUIStyle IconErrorSmallStyle;
-		private GUIStyle IconWarningSmallStyle;
-		private GUIStyle IconLogSmallStyle;
+		private GUIStyle iconErrorSmallStyle;
+		private GUIStyle iconWarningSmallStyle;
+		private GUIStyle iconLogSmallStyle;
 
-		private GUIStyle ErrorSmallStyle;
-		private GUIStyle WarningSmallStyle;
-		private GUIStyle LogSmallStyle;
+		private GUIStyle errorSmallStyle;
+		private GUIStyle warningSmallStyle;
+		private GUIStyle logSmallStyle;
 
-		private GUIStyle MessageStyle;
+		private GUIStyle messageStyle;
 
 		private Texture2D iconInfo;
 		private Texture2D iconInfoSmall;
@@ -180,8 +196,7 @@ namespace CustomConsole.Editor
 		private Texture2D iconErrorSmall;
 
 #if UNITY_2019_1_OR_NEWER
-		private IConnectionState consoleAttachToPlayerState;
-#else
+		private UnityEngine.Networking.PlayerConnection.IConnectionState consoleAttachToPlayerState;
 #endif
 
 #if UNITY_2019_1_OR_NEWER
@@ -257,15 +272,18 @@ namespace CustomConsole.Editor
 			}
 		}
 
+#if UNITY_2018_4_OR_NEWER
 		// コンパイル完了コールバック
 		private static void OnCompilationFinished(object obj)
 		{
+			// Clear on Buildとは違う。コンパイルごとにクリアさせる
 			if (isClearOnCompilation)
 			{
 				LogEntries.Clear();
 				GUIUtility.keyboardControl = 0;
 			}
 		}
+#endif
 
 		// 再描画する
 		public void DoLogChanged()
@@ -284,22 +302,25 @@ namespace CustomConsole.Editor
 			// Editorプルダウンメニューのインスタンス取得
 			if (consoleAttachToPlayerState == null)
 			{
+				// もとにあるConsoleからもらってくる
 				var type = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.ConsoleWindow");
 				type = type.GetNestedType("ConsoleAttachToPlayerState", BindingFlags.NonPublic);
 				var con = type.GetConstructor(new[] { typeof(EditorWindow), typeof(Action<string>) });
-				consoleAttachToPlayerState = (IConnectionState)con?.Invoke(new object[] { (EditorWindow)this, null });
+				consoleAttachToPlayerState = (UnityEngine.Networking.PlayerConnection.IConnectionState)con?.Invoke(new object[] { (EditorWindow)this, null });
 			}
-
-			// コンパイルコールバック設定 Unity2018.4～
-			CompilationPipeline.compilationFinished += OnCompilationFinished;
-			isClearOnCompilation = EditorPrefs.GetBool(CLEAR_ON_COMPILATION_KEY, false);
-			clearOnCompilationContent = new GUIContent(L10n.Tr("Clear on Compilation"), L10n.Tr("Clear log at compile time"));
 #else
 			if (consoleAttachProfilerUI == null)
 			{
 				consoleAttachProfilerUI = ConsoleAttachProfilerUIType.GetConstructor(new Type[0]).Invoke(new object[0]);
 			}
 #endif
+
+#if UNITY_2018_4_OR_NEWER
+			// コンパイルコールバック設定 Unity2018.4～
+			CompilationPipeline.compilationFinished += OnCompilationFinished;
+			isClearOnCompilation = EditorPrefs.GetBool(CLEAR_ON_COMPILATION_KEY, false);
+#endif
+
 			// 画面分割の割合を引き出す
 			float splitterX = EditorPrefs.GetFloat(SPLITTER_RELATIVE_X_PREFS_KEY, 0.3f);
 			float splitterY = EditorPrefs.GetFloat(SPLITTER_RELATIVE_Y_PREFS_KEY, 0.7f);
@@ -308,18 +329,19 @@ namespace CustomConsole.Editor
 			splitGUI = ctor.Invoke(new object[3] { new float[] { splitterX, splitterY }, new int[] { 32, 32 }, null });
 
 			LogStyleLineCount = EditorPrefs.GetInt(LOG_LINT_COUNT_KEY, 2);
-			isHorizontal = EditorPrefs.GetBool(WINDOW_SPLIT_TYPE_KEY, false);
-			
+			isHorizontal = EditorPrefs.GetBool(WINDOW_SPLIT_TYPE_KEY, false);			
 		}
 
 		private void OnDisable()
 		{
 #if UNITY_2019_1_OR_NEWER
 			consoleAttachToPlayerState?.Dispose();
-			consoleAttachToPlayerState = (IConnectionState)null;
-
+			consoleAttachToPlayerState = (UnityEngine.Networking.PlayerConnection.IConnectionState)null;
+#endif
+#if UNITY_2018_4_OR_NEWER && !UNITY_2019_1_OR_NEWER
 			CompilationPipeline.compilationFinished -= OnCompilationFinished;
 #endif
+
 			customConsoleWindow = null;
 
 			if (SplitterStateType != null)
@@ -354,8 +376,8 @@ namespace CustomConsole.Editor
 
 				if (!hasUpdateGUIStyles)
 				{
-					lineHeight = Mathf.RoundToInt(ErrorStyle.lineHeight);
-					borderHeight = ErrorStyle.border.top + ErrorStyle.border.bottom;
+					lineHeight = Mathf.RoundToInt(errorStyle.lineHeight);
+					borderHeight = errorStyle.border.top + errorStyle.border.bottom;
 					UpdateListView();
 				}
 
@@ -382,24 +404,56 @@ namespace CustomConsole.Editor
 					// ログリスト描画
 					DrawLogListView(current);
 
-					// ログ詳細とスタックトレース表示の分割
-					using (new EditorGUILayout.VerticalScope())
+					if (stackTraceList.Count > 0)
 					{
-						// GUIを分割する領域の指定
-						if (isHorizontal)
-							SplitterGUILayout.BeginHorizontalSplit(splitterState);
+						// ログ詳細とスタックトレース表示の分割
+						if(isHorizontal)
+						{
+							EditorGUILayout.BeginHorizontal();
+						}
 						else
-							SplitterGUILayout.BeginVerticalSplit(splitterState);
+						{
+							EditorGUILayout.BeginVertical();
+						}
+						//using (new EditorGUILayout.VerticalScope())
+						{
+							// GUIを分割する領域の指定
+							if (isHorizontal)
+							{
+								SplitterGUILayout.BeginHorizontalSplit(splitterState);
+							}
+							else
+							{
+								SplitterGUILayout.BeginVerticalSplit(splitterState);
+							}
 
+							// 選択されたログの詳細表示
+							DrawLogDetailView();
+							// 拡張部描画
+							DrawStackTraceView(current);
+
+							if (isHorizontal)
+							{
+								SplitterGUILayout.EndHorizontalSplit();
+							}
+							else
+							{
+								SplitterGUILayout.EndVerticalSplit();
+							}
+						}
+						if (isHorizontal)
+						{
+							EditorGUILayout.EndHorizontal();
+						}
+						else
+						{
+							EditorGUILayout.EndVertical();
+						}
+					}
+					else
+					{
 						// 選択されたログの詳細表示
 						DrawLogDetailView();
-						// 拡張部描画
-						DrawStackTraceView(current);
-
-						if (isHorizontal)
-							SplitterGUILayout.EndVerticalSplit();
-						else
-							SplitterGUILayout.EndHorizontalSplit();
 					}
 				}
 				SplitterGUILayout.EndVerticalSplit();
@@ -432,27 +486,30 @@ namespace CustomConsole.Editor
 				isLoaded = true;
 				toolbar = new GUIStyle("Toolbar");
 				toolbarButton = new GUIStyle("ToolbarButton");
+				toolbarButtonRight = new GUIStyle("ToolbarButtonRight");
 				box = new GUIStyle("CN Box");
-				CountBadge = new GUIStyle("CN CountBadge");
+				countBadge = new GUIStyle("CN CountBadge");
 
-				LogStyle = new GUIStyle("CN EntryInfo");
-				WarningStyle = new GUIStyle("CN EntryWarn");
-				ErrorStyle = new GUIStyle("CN EntryError");
-				MessageStyle = new GUIStyle("CN Message");
+				toolbarDropDownToggle = new GUIStyle("toolbarDropDownToggle");
+
+				logStyle = new GUIStyle("CN EntryInfo");
+				warningStyle = new GUIStyle("CN EntryWarn");
+				errorStyle = new GUIStyle("CN EntryError");
+				messageStyle = new GUIStyle("CN Message");
 
 				watchStyle = new GUIStyle("CN EntryInfo");
 
-				IconErrorStyle = new GUIStyle("CN EntryErrorIcon");
-				IconWarningStyle = new GUIStyle("CN EntryWarnIcon");
-				IconLogStyle = new GUIStyle("CN EntryInfoIcon");
+				iconErrorStyle = new GUIStyle("CN EntryErrorIcon");
+				iconWarningStyle = new GUIStyle("CN EntryWarnIcon");
+				iconLogStyle = new GUIStyle("CN EntryInfoIcon");
 
-				IconErrorSmallStyle = new GUIStyle("CN EntryErrorIconSmall");
-				IconWarningSmallStyle = new GUIStyle("CN EntryWarnIconSmall");
-				IconLogSmallStyle = new GUIStyle("CN EntryInfoIconSmall");
+				iconErrorSmallStyle = new GUIStyle("CN EntryErrorIconSmall");
+				iconWarningSmallStyle = new GUIStyle("CN EntryWarnIconSmall");
+				iconLogSmallStyle = new GUIStyle("CN EntryInfoIconSmall");
 
-				ErrorSmallStyle = new GUIStyle("CN EntryErrorSmall");
-				WarningSmallStyle = new GUIStyle("CN EntryWarnSmall");
-				LogSmallStyle = new GUIStyle("CN EntryInfoSmall");
+				errorSmallStyle = new GUIStyle("CN EntryErrorSmall");
+				warningSmallStyle = new GUIStyle("CN EntryWarnSmall");
+				logSmallStyle = new GUIStyle("CN EntryInfoSmall");
 
 				evenBackground = new GUIStyle("CN EntryBackEven");
 				oddBackground = new GUIStyle("CN EntryBackodd");
@@ -471,10 +528,28 @@ namespace CustomConsole.Editor
 
 				LogStyleLineCount = EditorPrefs.GetInt(LOG_LINT_COUNT_KEY, 2);
 
+#if UNITY_2020_1_OR_NEWER
+				clearContent = EditorGUIUtility.TrTextContent(ClearLabel, "Clear console entries");
+				clearOnPlayContent = EditorGUIUtility.TrTextContent(ClearOnPlayLabel);
+				clearOnBuildContent = EditorGUIUtility.TrTextContent(ClearOnBuildLabel);
+				clearOnCompilationContent = EditorGUIUtility.TrTextContent("Clear on Compilation", "Clear log at compile time");
+#else
+				// L10nはLocalizationの略
+				clearOnCompilationContent = new GUIContent(L10n.Tr("Clear on Compilation"), L10n.Tr("Clear log at compile time"));
+#endif
+
+
 				UpdateLogStyleFixedHeights();
 			}
 		}
 
+		private bool DropDownToggle(ref bool toggle)
+		{
+			object[] properties = new object[] { toggle, clearContent, toolbarDropDownToggle };
+			bool result = (bool)(EditorGUILayoutType.GetMethod("DropDownToggle", BindingFlags.Static | BindingFlags.NonPublic)?.Invoke(null, properties) ?? false);
+			toggle = (bool)properties[0];
+			return result;
+		}
 
 		/// <summary>
 		/// コンソール上部ツールバー描画
@@ -483,20 +558,44 @@ namespace CustomConsole.Editor
 		{
 			using (new GUILayout.HorizontalScope(toolbar))
 			{
+#if UNITY_2020_1_OR_NEWER
+				// ログクリアボタン
+				bool pressedClear = false;
+				if(DropDownToggle(ref pressedClear))
+				{
+					bool clearOnPlay = HasFlag(ConsoleFlags.ClearOnPlay);
+					bool clearOnBuild = HasFlag(ConsoleFlags.ClearOnBuild);
+					GenericMenu genericMenu = new GenericMenu();
+					genericMenu.AddItem(clearOnPlayContent, clearOnPlay, () => SetFlag(ConsoleFlags.ClearOnPlay, !clearOnPlay));
+					genericMenu.AddItem(clearOnBuildContent, clearOnBuild, () => SetFlag(ConsoleFlags.ClearOnBuild, !clearOnBuild));
+					genericMenu.AddItem(clearOnCompilationContent, isClearOnCompilation, () =>
+					{
+						EditorPrefs.SetBool(CLEAR_ON_COMPILATION_KEY, !isClearOnCompilation);
+						isClearOnCompilation = !isClearOnCompilation;
+					});
+
+					Rect lastRect = GUILayoutUtility.GetLastRect();
+					lastRect.y += EditorGUIUtility.singleLineHeight;
+					genericMenu.DropDown(lastRect);
+				}
+
+				if (pressedClear)
+				{
+					LogEntries.Clear();
+					GUIUtility.keyboardControl = 0;
+				}
+#else
 				// ログクリアボタン
 				if (GUILayout.Button(ClearLabel, toolbarButton))
 				{
 					LogEntries.Clear();
 					GUIUtility.keyboardControl = 0;
 				}
-
+#endif
 				int count = LogEntries.GetCount();
-				if (listViewState.totalRows != count && listViewState.totalRows > 0)
+				if (listViewState.totalRows != count && (double)listViewState.scrollPos.y >= (double)(listViewState.rowHeight * listViewState.totalRows - lvHeight))
 				{
-					if (listViewState.scrollPos.y >= (double)(listViewState.rowHeight * listViewState.totalRows - lvHeight))
-					{
-						listViewState.scrollPos.y = (float)(count * RowHeight - lvHeight);
-					}
+					listViewState.scrollPos.y = (float)(count * RowHeight - lvHeight);
 				}
 				EditorGUILayout.Space();
 
@@ -510,9 +609,12 @@ namespace CustomConsole.Editor
 					listViewState.scrollPos.y = (LogEntries.GetCount() * 32);
 				}
 
+#if !UNITY_2020_1_OR_NEWER
 				SetFlag(ConsoleFlags.ClearOnPlay, GUILayout.Toggle(HasFlag(ConsoleFlags.ClearOnPlay), ClearOnPlayLabel, toolbarButton));
 				SetFlag(ConsoleFlags.ClearOnBuild, GUILayout.Toggle(HasFlag(ConsoleFlags.ClearOnBuild), ClearOnBuildLabel, toolbarButton));
-#if UNITY_2019_1_OR_NEWER
+#endif
+
+#if UNITY_2018_4_OR_NEWER && !UNITY_2020_1_OR_NEWER
 				// コンパイル後ログクリア設定
 				bool isCoc = GUILayout.Toggle(isClearOnCompilation, clearOnCompilationContent, toolbarButton);
 				if (isClearOnCompilation != isCoc)
@@ -521,9 +623,18 @@ namespace CustomConsole.Editor
 					EditorPrefs.SetBool(CLEAR_ON_COMPILATION_KEY, isClearOnCompilation);
 				}
 #endif
-				SetFlag(ConsoleFlags.ErrorPause, GUILayout.Toggle(HasFlag(ConsoleFlags.ErrorPause), ErrorPauseLabel, toolbarButton));
+				if (HasSpaceForExtraButtons())
+				{
+					SetFlag(ConsoleFlags.ErrorPause, GUILayout.Toggle(HasFlag(ConsoleFlags.ErrorPause), ErrorPauseLabel, toolbarButton));
+				}
 
-#if UNITY_2019_1_OR_NEWER
+				// コンソールの接続関係
+#if UNITY_2020_1_OR_NEWER
+				if(consoleAttachToPlayerState != null)
+				{
+					UnityEditor.Networking.PlayerConnection.PlayerConnectionGUILayout.ConnectionTargetSelectionDropdown(consoleAttachToPlayerState, EditorStyles.toolbarDropDown);
+				}
+#elif UNITY_2019_1_OR_NEWER
 				if (consoleAttachToPlayerState != null)
 					UnityEditor.Experimental.Networking.PlayerConnection.EditorGUILayout.AttachToPlayerDropdown(consoleAttachToPlayerState, EditorStyles.toolbarDropDown);
 #else
@@ -547,11 +658,35 @@ namespace CustomConsole.Editor
 					searchFieldText = str;
 				}
 #endif
+				GUILayout.FlexibleSpace();
+
+				// ログリスト内移動　2022.04.01
+				if (GUILayout.Button(new GUIContent("First"), toolbarButton, GUILayout.Width(50)))
+				{
+					listViewState.scrollPos.y = 0;
+				}
+
+				if(GUILayout.Button(new GUIContent("Latest"), toolbarButton, GUILayout.Width(50)))
+				{
+					listViewState.scrollPos.y = LogEntries.GetCount() * RowHeight - lvHeight;
+				}
+
+				if (GUILayout.Button(new GUIContent("Select"), toolbarButton, GUILayout.Width(50)))
+				{
+					if (listViewState.currentRow > -1)
+					{
+						listViewState.scrollPos.y = listViewState.currentRow * RowHeight;
+					}
+				}
 
 				GUILayout.FlexibleSpace();
 
-				SetFlag(ConsoleFlags.StopForAssert, GUILayout.Toggle(HasFlag(ConsoleFlags.StopForAssert), StopForAssertLabel, toolbarButton));
-				SetFlag(ConsoleFlags.StopForError, GUILayout.Toggle(HasFlag(ConsoleFlags.StopForError), StopForErrorLabel, toolbarButton));
+				// 隠されている機能、動作しているようには見えないので、オリジナル通りふさぐ
+				if (Unsupported.IsDeveloperMode())
+				{
+					SetFlag(ConsoleFlags.StopForAssert, GUILayout.Toggle(HasFlag(ConsoleFlags.StopForAssert), StopForAssertLabel, toolbarButton));
+					SetFlag(ConsoleFlags.StopForError, GUILayout.Toggle(HasFlag(ConsoleFlags.StopForError), StopForErrorLabel, toolbarButton));
+				}
 
 				bool isSplitHorizontal = GUILayout.Toggle(isHorizontal, "SplitHorizontal", toolbarButton);
 
@@ -564,9 +699,12 @@ namespace CustomConsole.Editor
 				GUILayout.FlexibleSpace();
 
 				// 検索窓
-				GUILayout.Space(4f);
-				SearchField(e);
-				GUILayout.Space(4f);
+				if (HasSpaceForExtraButtons())
+				{
+					GUILayout.Space(4f);
+					SearchField(e);
+					GUILayout.Space(4f);
+				}
 
 				// 各種ログ数表示
 				using (EditorGUI.ChangeCheckScope changeScope = new EditorGUI.ChangeCheckScope())
@@ -581,7 +719,7 @@ namespace CustomConsole.Editor
 
 					bool isShowDebugLog = GUILayout.Toggle(HasFlag(ConsoleFlags.LogLevelLog), debugLogContent, toolbarButton);
 					bool isShowWarningLog = GUILayout.Toggle(HasFlag(ConsoleFlags.LogLevelWarning), warningContent, toolbarButton);
-					bool isShowErrorLog = GUILayout.Toggle(HasFlag(ConsoleFlags.LogLevelError), errorContent, toolbarButton);
+					bool isShowErrorLog = GUILayout.Toggle(HasFlag(ConsoleFlags.LogLevelError), errorContent, toolbarButtonRight);
 					if (changeScope.changed)
 					{
 						SetActiveEntry(null);
@@ -597,7 +735,7 @@ namespace CustomConsole.Editor
 		/// <summary>
 		/// ログリスト描画
 		/// </summary>
-		/// <param name="current"></param>
+		/// <param name="current">Event</param>
 		private void DrawLogListView(Event current)
 		{
 			GUIContent gUIContent = new GUIContent();
@@ -707,11 +845,11 @@ namespace CustomConsole.Editor
 								{
 									Rect pos = element.position;
 									gUIContent.text = LogEntries.GetEntryCount(element.row).ToString(CultureInfo.InvariantCulture);
-									Vector2 vector = CountBadge.CalcSize(gUIContent);
+									Vector2 vector = countBadge.CalcSize(gUIContent);
 									pos.xMin = pos.xMax - vector.x;
 									pos.yMin += (pos.yMax - pos.yMin - vector.y) * 0.5f;
 									pos.x -= 5f;
-									GUI.Label(pos, gUIContent, CountBadge);
+									GUI.Label(pos, gUIContent, countBadge);
 								}
 							}
 						}
@@ -792,10 +930,10 @@ namespace CustomConsole.Editor
 			{
 				string stackWithHyperlinks = StacktraceWithHyperlinks(activeText);
 
-				float minHeight = MessageStyle.CalcHeight(new GUIContent(stackWithHyperlinks, ""), base.position.width);
+				float minHeight = messageStyle.CalcHeight(new GUIContent(stackWithHyperlinks, ""), base.position.width);
 				textScrollPos = scrollViewScope.scrollPosition;
 
-				EditorGUILayout.SelectableLabel(stackWithHyperlinks, MessageStyle, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true), GUILayout.MinHeight(minHeight));
+				EditorGUILayout.SelectableLabel(stackWithHyperlinks, messageStyle, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true), GUILayout.MinHeight(minHeight));
 			}
 		}
 
@@ -806,9 +944,20 @@ namespace CustomConsole.Editor
 		private void DrawStackTraceView(Event current)
 		{
 			// ログスタックトレース　描画
-			using (EditorGUILayout.ScrollViewScope svs2 = new EditorGUILayout.ScrollViewScope(stackTraceScrollPos, box))
+			float maxWidth = 0;
+			for (int i = 0; i < stackTraceList.Count; i++)
 			{
-				stackTraceScrollPos = svs2.scrollPosition;
+				// 文字の幅を取得
+				var w = logStyle.CalcSize(new GUIContent(stackTraceList[i].MethodName)).x;
+				if (w > maxWidth)
+				{
+					maxWidth = w;
+				}
+			}
+
+			//using (EditorGUILayout.ScrollViewScope svs2 = new EditorGUILayout.ScrollViewScope(stackTraceScrollPos, box))
+			{
+				//stackTraceScrollPos = svs2.scrollPosition;
 
 				// スタックトレース表示
 				IEnumerator enumerator = ListViewGUI.ListView(stackTraceViewState, box).GetEnumerator();
@@ -820,13 +969,18 @@ namespace CustomConsole.Editor
 						{
 							ListViewElement element = (ListViewElement)enumerator.Current;
 
-							// 選択した位置でのスクリプトファイルを開く
+							// 選択した位置でのスクリプトファイルを開く current.buttonが0なら左クリック
 							if (current.type == EventType.MouseDown && current.button == 0 && element.position.Contains(current.mousePosition))
 							{
+								// ダブルクリック？
 								if (current.clickCount == 2)
 								{
+#if UNITY_2020_1_OR_NEWER
+									LogEntries.OpenFileOnSpecificLineAndColumn(stackTraceList[stackTraceViewState.currentRow].DataPath, stackTraceList[stackTraceViewState.currentRow].LineNumber, stackTraceList[stackTraceViewState.currentRow].ColumnNumber);
+#else
 									UnityEngine.Object scriptFile = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(stackTraceList[stackTraceViewState.currentRow].DataPath);
 									AssetDatabase.OpenAsset(scriptFile, stackTraceList[stackTraceViewState.currentRow].LineNumber);
+#endif
 								}
 							}
 
@@ -835,16 +989,47 @@ namespace CustomConsole.Editor
 							{
 								GUIStyle gUIStyle = (element.row % 2 != 0) ? evenBackground : oddBackground;
 								Rect r = element.position;
+								// 選択されている行か
+								bool on = stackTraceViewState.currentRow == element.row;
 
 								// 背景
-								gUIStyle.Draw(new Rect(r.x + 1, r.y + 1, r.width, r.height), false, false, stackTraceViewState.currentRow == element.row, false);
+								gUIStyle.Draw(new Rect(r.x + 1, r.y + 1, r.width, r.height), false, false, on, false);
 
 								if (stackTraceList.Count > element.row)
 								{
+									string line = stackTraceList[element.row].ColumnNumber >= 0 ? $"({stackTraceList[element.row].LineNumber:##00},{stackTraceList[element.row].ColumnNumber:00})"
+										: stackTraceList[element.row].LineNumber.ToString("##00");
+									bool showMethod = !string.IsNullOrEmpty(stackTraceList[element.row].MethodName);
+
+									string method = stackTraceList[element.row].MethodName;
+									string path = stackTraceList[element.row].DataPath;
+
 									// 行番号：メソッド名:ファイルの場所
-									LogStyle.Draw(new Rect(r.x - 10, r.y, 70, r.height), stackTraceList[element.row].LineNumber.ToString("0000"), false, false, stackTraceViewState.currentRow == element.row, false);
-									LogStyle.Draw(new Rect(r.x + 30, r.y, 400, r.height), stackTraceList[element.row].MethodName, false, false, stackTraceViewState.currentRow == element.row, false);
-									LogStyle.Draw(new Rect(r.x + 60 + 400, r.y, 500, r.height), stackTraceList[element.row].DataPath, false, false, stackTraceViewState.currentRow == element.row, false);
+									if (showMethod)
+									{
+#if false
+										//EditorGUI.LabelField(r, $"{line} {method} {path}", logStyle);
+										logStyle.alignment = TextAnchor.UpperRight;
+										logStyle.Draw(new Rect(r.x - 35, r.y + 9, 70, r.height / 2f), line, false, false, on, false);
+										logStyle.alignment = TextAnchor.UpperLeft;
+										logStyle.Draw(new Rect(r.x + 15, r.y, maxWidth, r.height / 2f), method, false, false, on, false);
+										logStyle.Draw(new Rect(r.x + 15, r.y + 18, 500, r.height / 2f), path, false, false, on, false);
+
+#else
+										logStyle.alignment = TextAnchor.UpperRight;
+										logStyle.Draw(new Rect(r.x - 35, r.y, 70, r.height), line, false, false, on, false);
+										logStyle.alignment = TextAnchor.UpperLeft;
+										logStyle.Draw(new Rect(r.x + 15, r.y, maxWidth, r.height), method, false, false, on, false);
+										logStyle.Draw(new Rect(r.x + maxWidth, r.y, 500, r.height), path, false, false, on, false);
+#endif
+									}
+									else
+									{
+										logStyle.alignment = TextAnchor.UpperRight;
+										logStyle.Draw(new Rect(r.x - 25, r.y, 100, r.height), line, false, false, on, false);
+										logStyle.alignment = TextAnchor.UpperLeft;
+										logStyle.Draw(new Rect(r.x + 40, r.y, 500, r.height), path, false, false, on, false);
+									}
 								}
 							}
 						}
@@ -862,8 +1047,13 @@ namespace CustomConsole.Editor
 				// キー入力　エンターキーで押された時の処理
 				if (GUIUtility.keyboardControl == stackTraceViewState.ID && current.type == EventType.KeyDown && current.keyCode == KeyCode.Return && stackTraceViewState.currentRow != 0)
 				{
+					// 指定されたスクリプトを開く
 					UnityEngine.Object scriptFile = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(stackTraceList[stackTraceViewState.currentRow].DataPath);
+#if UNITY_2020_1_OR_NEWER
+					LogEntries.OpenFileOnSpecificLineAndColumn(stackTraceList[stackTraceViewState.currentRow].DataPath, stackTraceList[stackTraceViewState.currentRow].LineNumber, stackTraceList[stackTraceViewState.currentRow].ColumnNumber);
+#else
 					AssetDatabase.OpenAsset(scriptFile, stackTraceList[stackTraceViewState.currentRow].LineNumber);
+#endif
 				}
 			}
 		}
@@ -918,6 +1108,7 @@ namespace CustomConsole.Editor
 			//else
 			if (condition.Contains("Exception:"))
 			{
+				// 例外対応
 				// 分割したときに空白になる場合は配列に入れない設定
 				string[] splitLog = condition.Split(new string[] { "\n" }, StringSplitOptions.RemoveEmptyEntries);
 
@@ -990,27 +1181,39 @@ namespace CustomConsole.Editor
 
 				// 改行文字で分割
 				string[] splitLog = text.Split(new string[] { "\n" }, StringSplitOptions.RemoveEmptyEntries);
-				if (splitLog.Length > 1)
+				if (splitLog.Length > 0)
 				{
-					for (int i = 1; i < splitLog.Length; i++)
+					for (int i = 0; i < splitLog.Length; i++)
 					{
 						// パスが含まれた行を探す
-						if (splitLog[i].Contains("Assets/"))
+						if (splitLog[i].Contains("Assets"))
 						{
 							// パスを分離させる
 							string[] split = splitLog[i].Split(new string[] { " (at " }, StringSplitOptions.RemoveEmptyEntries);
-
-							if (1 < split.Length)
+							string[] split2 = splitLog[i].Split(new string[] { "): " }, StringSplitOptions.RemoveEmptyEntries);
+							if (split.Length > 1)
 							{
 								// パスと行番号を分離
 								string[] stSplit = split[1].Replace(")", "").Split(':');
 
-								stackTraceList.Add(new StackTraceData()
+								stackTraceList.Add(new StackTraceData(int.Parse(stSplit[1]), split[0], stSplit[0]));
+							}
+							else if(split2.Length > 1)
+							{
+								// Assets\Scripts\Editor\Sample.cs(20,13
+								string[] stSplit = split2[0].Split('(');
+								// 20,13
+								string[] stSplit2 = stSplit[1].Split(',');
+
+
+								if(stSplit2.Length > 1)
 								{
-									DataPath = stSplit[0],
-									MethodName = split[0],
-									LineNumber = int.Parse(stSplit[1])
-								});
+									stackTraceList.Add(new StackTraceData(int.Parse(stSplit2[0]), "", stSplit[0], int.Parse(stSplit2[1])));
+								}
+								else
+								{
+									stackTraceList.Add(new StackTraceData(int.Parse(stSplit2[0]), "", stSplit[0]));
+								}
 							}
 						}
 					}
@@ -1092,7 +1295,7 @@ namespace CustomConsole.Editor
 		}
 
 		/// <summary>
-		/// 詳細ログ内のハイパーテキストをリンクにする
+		/// 詳細ログ内のハイパーテキストにリンクを着ける
 		/// </summary>
 		/// <param name="stacktraceText"></param>
 		/// <returns></returns>
@@ -1100,21 +1303,24 @@ namespace CustomConsole.Editor
 		{
 #if UNITY_2019_1_OR_NEWER
 			StringBuilder textWithHyperlinks = new StringBuilder();
+			// 改行で分割
 			var lines = stacktraceText.Split(new string[] { "\n" }, StringSplitOptions.None);
 			for (int i = 0; i < lines.Length; ++i)
 			{
+				// スクリプトファイルがある行を探す
 				string textBeforeFilePath = ") (at ";
 				int filePathIndex = lines[i].IndexOf(textBeforeFilePath, StringComparison.Ordinal);
 				if (filePathIndex > 0)
 				{
 					filePathIndex += textBeforeFilePath.Length;
-					if (lines[i][filePathIndex] != '<') // sometimes no url is given, just an id between <>, we can't do an hyperlink
+					if (lines[i][filePathIndex] != '<')
 					{
 						string filePathPart = lines[i].Substring(filePathIndex);
-						int lineIndex = filePathPart.LastIndexOf(":", StringComparison.Ordinal); // LastIndex because the url can contain ':' ex:"C:"
+						int lineIndex = filePathPart.LastIndexOf(":", StringComparison.Ordinal);
+
 						if (lineIndex > 0)
 						{
-							int endLineIndex = filePathPart.LastIndexOf(")", StringComparison.Ordinal); // LastIndex because files or folder in the url can contain ')'
+							int endLineIndex = filePathPart.LastIndexOf(")", StringComparison.Ordinal);
 							if (endLineIndex > 0)
 							{
 								string lineString =
@@ -1127,24 +1333,27 @@ namespace CustomConsole.Editor
 								textWithHyperlinks.Append(filePath + ":" + lineString);
 								textWithHyperlinks.Append("</a>)\n");
 
-								continue; // continue to evade the default case
+								continue;
 							}
 						}
 					}
 				}
-				// default case if no hyperlink : we just write the line
+				// 改行をつけなおす
 				textWithHyperlinks.Append(lines[i] + "\n");
 			}
-			// Remove the last \n
-			if (textWithHyperlinks.Length > 0) // textWithHyperlinks always ends with \n if it is not empty
+
+			if (textWithHyperlinks.Length > 0)
+			{
 				textWithHyperlinks.Remove(textWithHyperlinks.Length - 1, 1);
+			}
+
 			return textWithHyperlinks.ToString();
 #else
 			return stacktraceText;
 #endif
 		}
 
-		#region 操作関数系
+#region 操作関数系
 
 		// 選択されたログをアクティブにする。nullが渡された場合はアクティブを解除する
 		private void SetActiveEntry(LogEntry entry)
@@ -1232,22 +1441,22 @@ namespace CustomConsole.Editor
 				{
 					if (isSmall)
 					{
-						result = IconErrorSmallStyle;
+						result = iconErrorSmallStyle;
 					}
 					else
 					{
-						result = IconErrorStyle;
+						result = iconErrorStyle;
 					}
 				}
 				else
 				{
 					if (isSmall)
 					{
-						result = ErrorSmallStyle;
+						result = errorSmallStyle;
 					}
 					else
 					{
-						result = ErrorStyle;
+						result = errorStyle;
 					}
 				}
 			}
@@ -1257,22 +1466,22 @@ namespace CustomConsole.Editor
 				{
 					if (isSmall)
 					{
-						result = IconWarningSmallStyle;
+						result = iconWarningSmallStyle;
 					}
 					else
 					{
-						result = IconWarningStyle;
+						result = iconWarningStyle;
 					}
 				}
 				else
 				{
 					if (isSmall)
 					{
-						result = WarningSmallStyle;
+						result = warningSmallStyle;
 					}
 					else
 					{
-						result = WarningStyle;
+						result = warningStyle;
 					}
 				}
 			}
@@ -1282,31 +1491,36 @@ namespace CustomConsole.Editor
 				{
 					if (isSmall)
 					{
-						result = IconLogSmallStyle;
+						result = iconLogSmallStyle;
 					}
 					else
 					{
-						result = IconLogStyle;
+						result = iconLogStyle;
 					}
 				}
 				else
 				{
 					if (isSmall)
 					{
-						result = LogSmallStyle;
+						result = logSmallStyle;
 					}
 					else
 					{
-						result = LogStyle;
+						result = logStyle;
 					}
 				}
 			}
 			return result;
 		}
 
-		#endregion
+		/// <summary>
+		/// 一定の幅より狭いか
+		/// </summary>
+		/// <returns></returns>
+		private bool HasSpaceForExtraButtons() => (double)position.width > 420.0;
+#endregion
 
-		#region コンテキストメニュー拡張
+#region コンテキストメニュー拡張
 
 		public struct StackTraceLogTypeData
 		{
@@ -1371,11 +1585,13 @@ namespace CustomConsole.Editor
 			UpdateListView();
 		}
 
+
+
 		public void UpdateLogStyleFixedHeights()
 		{
-			ErrorStyle.fixedHeight = LogStyleLineCount * ErrorStyle.lineHeight + ErrorStyle.border.top;
-			WarningStyle.fixedHeight = LogStyleLineCount * WarningStyle.lineHeight + WarningStyle.border.top;
-			LogStyle.fixedHeight = LogStyleLineCount * LogStyle.lineHeight + LogStyle.border.top;
+			errorStyle.fixedHeight = LogStyleLineCount * errorStyle.lineHeight + errorStyle.border.top;
+			warningStyle.fixedHeight = LogStyleLineCount * warningStyle.lineHeight + warningStyle.border.top;
+			logStyle.fixedHeight = LogStyleLineCount * logStyle.lineHeight + logStyle.border.top;
 		}
 
 		/// <summary>
@@ -1493,6 +1709,6 @@ namespace CustomConsole.Editor
 				}
 			}
 		}
-		#endregion
+#endregion
 	}
 }
