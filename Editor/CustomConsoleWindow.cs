@@ -6,9 +6,10 @@ using System.Reflection;
 using System.Text;
 using UnityEditor;
 using UnityEditor.Compilation;
+using UnityEditor.Networking.PlayerConnection;
 using UnityEditorInternal;
 using UnityEngine;
-
+using UnityEngine.Networking.PlayerConnection;
 using Assembly = System.Reflection.Assembly;
 
 namespace CustomConsole.Editor
@@ -297,8 +298,17 @@ namespace CustomConsole.Editor
 			Texture2D titleIcon = EditorGUIUtility.Load("icons/d_UnityEditor.ConsoleWindow.png") as Texture2D;
 			titleContent = new GUIContent("CustomConsole", titleIcon);
 			customConsoleWindow = this;
-
-#if UNITY_2019_1_OR_NEWER
+#if UNITY_2021_1_OR_NEWER
+			// Editorプルダウンメニューのインスタンス取得
+			if (consoleAttachToPlayerState == null)
+			{
+				// もとにあるConsoleからもらってくる
+				var type = Assembly.Load(ASSEMBLY_NAME).GetType("UnityEditor.ConsoleWindow");
+				type = type.GetNestedType("ConsoleAttachToPlayerState", BindingFlags.NonPublic);
+				var con = type.GetConstructors()[0];
+				consoleAttachToPlayerState = (UnityEngine.Networking.PlayerConnection.IConnectionState)con.Invoke(new object[] { (EditorWindow)this, null });
+			}
+#elif UNITY_2019_1_OR_NEWER
 			// Editorプルダウンメニューのインスタンス取得
 			if (consoleAttachToPlayerState == null)
 			{
@@ -329,12 +339,16 @@ namespace CustomConsole.Editor
 			splitGUI = ctor.Invoke(new object[3] { new float[] { splitterX, splitterY }, new int[] { 32, 32 }, null });
 
 			LogStyleLineCount = EditorPrefs.GetInt(LOG_LINT_COUNT_KEY, 2);
-			isHorizontal = EditorPrefs.GetBool(WINDOW_SPLIT_TYPE_KEY, false);			
+			isHorizontal = EditorPrefs.GetBool(WINDOW_SPLIT_TYPE_KEY, false);
 		}
 
 		private void OnDisable()
 		{
-#if UNITY_2019_1_OR_NEWER
+#if UNITY_2021_1_OR_NEWER
+			IConnectionState attachToPlayerState = consoleAttachToPlayerState;
+			attachToPlayerState?.Dispose();
+			consoleAttachToPlayerState = null;
+#elif UNITY_2019_1_OR_NEWER
 			consoleAttachToPlayerState?.Dispose();
 			consoleAttachToPlayerState = (UnityEngine.Networking.PlayerConnection.IConnectionState)null;
 #endif
@@ -407,7 +421,7 @@ namespace CustomConsole.Editor
 					if (stackTraceList.Count > 0)
 					{
 						// ログ詳細とスタックトレース表示の分割
-						if(isHorizontal)
+						if (isHorizontal)
 						{
 							EditorGUILayout.BeginHorizontal();
 						}
@@ -490,7 +504,7 @@ namespace CustomConsole.Editor
 				box = new GUIStyle("CN Box");
 				countBadge = new GUIStyle("CN CountBadge");
 
-				toolbarDropDownToggle = new GUIStyle("toolbarDropDownToggle");
+				toolbarDropDownToggle = GetGUIStyle("toolbarDropDownToggle");
 
 				logStyle = new GUIStyle("CN EntryInfo");
 				warningStyle = new GUIStyle("CN EntryWarn");
@@ -529,7 +543,7 @@ namespace CustomConsole.Editor
 				LogStyleLineCount = EditorPrefs.GetInt(LOG_LINT_COUNT_KEY, 2);
 
 #if UNITY_2020_1_OR_NEWER
-				clearContent = EditorGUIUtility.TrTextContent(ClearLabel, "Clear console entries");
+				clearContent = EditorGUIUtility.TrTextContent(ClearLabel, "Clear console entries", (Texture)null);
 				clearOnPlayContent = EditorGUIUtility.TrTextContent(ClearOnPlayLabel);
 				clearOnBuildContent = EditorGUIUtility.TrTextContent(ClearOnBuildLabel);
 				clearOnCompilationContent = EditorGUIUtility.TrTextContent("Clear on Compilation", "Clear log at compile time");
@@ -543,28 +557,59 @@ namespace CustomConsole.Editor
 			}
 		}
 
+		private GUIStyle GetGUIStyle(string styleName)
+		{
+			return GUI.skin.FindStyle(styleName) ?? EditorGUIUtility.GetBuiltinSkin(EditorSkin.Inspector).FindStyle(styleName);
+		}
+
 		private bool DropDownToggle(ref bool toggle)
 		{
+#if UNITY_2021_1_OR_NEWER
+			object[] properties = new object[] { toggle, clearContent, toolbarDropDownToggle };
+			var list = EditorGUILayoutType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic);
+			MethodInfo m = null;
+			foreach (var a in list)
+			{
+				if (a.Name == "DropDownToggle" && a.GetParameters().Length == 3)
+				{
+					m = a;
+					break;
+				}
+			}
+
+			bool result = (bool)m.Invoke(null, properties);
+			toggle = (bool)properties[0];
+
+			return result;
+#else
+
 			object[] properties = new object[] { toggle, clearContent, toolbarDropDownToggle };
 			bool result = (bool)(EditorGUILayoutType.GetMethod("DropDownToggle", BindingFlags.Static | BindingFlags.NonPublic)?.Invoke(null, properties) ?? false);
 			toggle = (bool)properties[0];
 			return result;
+#endif
 		}
 
 		/// <summary>
 		/// コンソール上部ツールバー描画
 		/// </summary>
-		private void DrawToolbar(Event e)
+		private void DrawToolbar(Event eventdata)
 		{
+#if UNITY_2021_1_OR_NEWER
+			GUILayout.BeginHorizontal(toolbar);
+#else
 			using (new GUILayout.HorizontalScope(toolbar))
+#endif
 			{
 #if UNITY_2020_1_OR_NEWER
 				// ログクリアボタン
 				bool pressedClear = false;
-				if(DropDownToggle(ref pressedClear))
+				if (DropDownToggle(ref pressedClear))
 				{
 					bool clearOnPlay = HasFlag(ConsoleFlags.ClearOnPlay);
 					bool clearOnBuild = HasFlag(ConsoleFlags.ClearOnBuild);
+					//bool clearOnRecompile = HasFlag(ConsoleFlags.ClearOnRecompile);
+
 					GenericMenu genericMenu = new GenericMenu();
 					genericMenu.AddItem(clearOnPlayContent, clearOnPlay, () => SetFlag(ConsoleFlags.ClearOnPlay, !clearOnPlay));
 					genericMenu.AddItem(clearOnBuildContent, clearOnBuild, () => SetFlag(ConsoleFlags.ClearOnBuild, !clearOnBuild));
@@ -630,9 +675,25 @@ namespace CustomConsole.Editor
 
 				// コンソールの接続関係
 #if UNITY_2020_1_OR_NEWER
-				if(consoleAttachToPlayerState != null)
+				if (HasSpaceForExtraButtons())
 				{
-					UnityEditor.Networking.PlayerConnection.PlayerConnectionGUILayout.ConnectionTargetSelectionDropdown(consoleAttachToPlayerState, EditorStyles.toolbarDropDown);
+					try
+					{
+						PlayerConnectionGUILayout.ConnectionTargetSelectionDropdown(consoleAttachToPlayerState, EditorStyles.toolbarDropDown);
+					}
+					catch
+#if !UNITY_2020_1_OR_NEWER
+					(Exception exception) 
+#endif
+					{
+#if UNITY_2021_1_OR_NEWER
+						// 例外がスローされるが、意図的にスローされる例外っぽいのでスルーさせる
+						// 例外が出てこれが要求されている
+						GUILayout.EndHorizontal();
+#else
+						throw exception;
+#endif
+					}
 				}
 #elif UNITY_2019_1_OR_NEWER
 				if (consoleAttachToPlayerState != null)
@@ -646,7 +707,7 @@ namespace CustomConsole.Editor
 				//this.consoleAttachProfilerUI.OnGUILayout((EditorWindow)this); 
 #endif
 
-				EditorGUILayout.Space();
+				//EditorGUILayout.Space();
 
 #if false
 				float a = (float)((EditorGUIUtility.labelWidth + (double)EditorGUIUtility.fieldWidth + 5.0) * 1.5);
@@ -666,7 +727,7 @@ namespace CustomConsole.Editor
 					listViewState.scrollPos.y = 0;
 				}
 
-				if(GUILayout.Button(new GUIContent("Latest"), toolbarButton, GUILayout.Width(50)))
+				if (GUILayout.Button(new GUIContent("Latest"), toolbarButton, GUILayout.Width(50)))
 				{
 					listViewState.scrollPos.y = LogEntries.GetCount() * RowHeight - lvHeight;
 				}
@@ -702,7 +763,7 @@ namespace CustomConsole.Editor
 				if (HasSpaceForExtraButtons())
 				{
 					GUILayout.Space(4f);
-					SearchField(e);
+					SearchField(eventdata);
 					GUILayout.Space(4f);
 				}
 
@@ -730,6 +791,9 @@ namespace CustomConsole.Editor
 					SetFlag(ConsoleFlags.LogLevelError, isShowErrorLog);
 				}
 			}
+#if UNITY_2021_1_OR_NEWER
+			GUILayout.EndHorizontal();
+#endif
 		}
 
 		/// <summary>
@@ -1198,7 +1262,7 @@ namespace CustomConsole.Editor
 
 								stackTraceList.Add(new StackTraceData(int.Parse(stSplit[1]), split[0], stSplit[0]));
 							}
-							else if(split2.Length > 1)
+							else if (split2.Length > 1)
 							{
 								// Assets\Scripts\Editor\Sample.cs(20,13
 								string[] stSplit = split2[0].Split('(');
@@ -1206,7 +1270,7 @@ namespace CustomConsole.Editor
 								string[] stSplit2 = stSplit[1].Split(',');
 
 
-								if(stSplit2.Length > 1)
+								if (stSplit2.Length > 1)
 								{
 									stackTraceList.Add(new StackTraceData(int.Parse(stSplit2[0]), "", stSplit[0], int.Parse(stSplit2[1])));
 								}
@@ -1353,7 +1417,7 @@ namespace CustomConsole.Editor
 #endif
 		}
 
-#region 操作関数系
+		#region 操作関数系
 
 		// 選択されたログをアクティブにする。nullが渡された場合はアクティブを解除する
 		private void SetActiveEntry(LogEntry entry)
@@ -1518,16 +1582,16 @@ namespace CustomConsole.Editor
 		/// </summary>
 		/// <returns></returns>
 		private bool HasSpaceForExtraButtons() => (double)position.width > 420.0;
-#endregion
+		#endregion
 
-#region コンテキストメニュー拡張
+		#region コンテキストメニュー拡張
 
 		public struct StackTraceLogTypeData
 		{
 			public LogType logType;
 			public StackTraceLogType stackTraceLogType;
 		}
-		
+
 		/// <summary>
 		/// Window右上のコンテキストメニューに追加する
 		/// IHasCustomMenuの必要な関数
@@ -1709,6 +1773,6 @@ namespace CustomConsole.Editor
 				}
 			}
 		}
-#endregion
+		#endregion
 	}
 }

@@ -16,7 +16,9 @@ namespace CustomConsole.Editor
 
 	public static class GUIClipHelper
 	{
-#if UNITY_2018_2_OR_NEWER
+#if UNITY_2021_1_OR_NEWER
+		private static readonly Type GUIClip = Assembly.Load("UnityEngine.dll").GetType("UnityEngine.GUIClip");
+#elif UNITY_2018_2_OR_NEWER
 		private static readonly Type GUIClip = Assembly.Load("UnityEngine/UnityEngine.IMGUIModule.dll").GetType("UnityEngine.GUIClip");
 #else
 		private static readonly Type GUIClip = Assembly.Load("UnityEngine.dll").GetType("UnityEngine.GUIClip");
