@@ -355,7 +355,6 @@ namespace CustomConsole.Editor
 #if UNITY_2018_4_OR_NEWER && !UNITY_2019_1_OR_NEWER
 			CompilationPipeline.compilationFinished -= OnCompilationFinished;
 #endif
-
 			customConsoleWindow = null;
 
 			if (SplitterStateType != null)
@@ -406,7 +405,8 @@ namespace CustomConsole.Editor
 				if (current.type == EventType.MouseUp && isDragging)
 				{
 					isDragging = false;
-					float[] array = (float[])SplitterStateType.GetField("relativeSizes", BindingFlags.Public | BindingFlags.Instance)?.GetValue(splitGUI) ?? new[] { 0.3f, 0.7f };
+					float[] array = (float[])SplitterStateType.GetField("relativeSizes", BindingFlags.Public | BindingFlags.Instance)?.GetValue(splitGUI)
+						?? new[] { 0.3f, 0.7f };
 
 					EditorPrefs.SetFloat(SPLITTER_RELATIVE_X_PREFS_KEY, array[0]);
 					EditorPrefs.SetFloat(SPLITTER_RELATIVE_Y_PREFS_KEY, array[1]);
