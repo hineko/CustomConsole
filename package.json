@@ -1,9 +1,9 @@
 {
-    "name":         "com.unity.customconsole",
+    "name":         "com.hineko.customconsole",
     "displayName":  "CustomConsole",
     "license":      "MIT",
     "version":      "1.6.0",
-    "unity":        "6000.0.38f1",
+    "unity":        "6000.0.38",
     "description":  "拡張ログコンソール",
     "dependencies": {},
     "keywords": ["Console"],
